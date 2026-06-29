@@ -13,7 +13,6 @@ st.write("Aplikasi ini menggunakan Machine Learning yang dilatih langsung dengan
 # ==========================================
 # PANTAUAN KOLOM (Sesuaikan dengan file Excel Anda)
 # ==========================================
-# CATATAN: Sesuaikan nama kolom di bawah ini agar sama persis dengan yang ada di file Excel Anda.
 KOLOM_WAJIB = ['household_size', 'occupancy_count', 'power_watts', 'duration_minutes']
 
 # ==========================================
@@ -47,9 +46,28 @@ def train_model_on_data(df_input):
     return model, q1, q2
 
 # ==========================================
+# CALLBACK: DIPROSES SEBELUM TAMPILAN DIGAMBAR
+# ==========================================
+def handle_upload():
+    if st.session_state['uploaded_file_key'] is not None:
+        try:
+            df_uploaded = pd.read_excel(st.session_state['uploaded_file_key'])
+            if all(kolom in df_uploaded.columns for kolom in KOLOM_WAJIB):
+                # Latih model asli
+                model_asli, q1_asli, q2_asli = train_model_on_data(df_uploaded)
+                
+                # Simpan ke session state
+                st.session_state['model'] = model_asli
+                st.session_state['is_using_real_data'] = True
+                st.session_state['error_message'] = None
+            else:
+                st.session_state['error_message'] = f"File Excel harus memiliki kolom wajib: {', '.join(KOLOM_WAJIB)}"
+        except Exception as e:
+            st.session_state['error_message'] = f"Gagal membaca file: {str(e)}"
+
+# ==========================================
 # INISIALISASI MODEL DI SESSION STATE
 # ==========================================
-# Membuat model acak awal agar aplikasi tidak error saat pertama kali dibuka (sebelum upload file)
 if 'model' not in st.session_state:
     np.random.seed(42)
     df_dummy_awal = pd.DataFrame({
@@ -61,6 +79,7 @@ if 'model' not in st.session_state:
     model_awal, q1_awal, q2_awal = train_model_on_data(df_dummy_awal)
     st.session_state['model'] = model_awal
     st.session_state['is_using_real_data'] = False
+    st.session_state['error_message'] = None
 
 # ==========================================
 # MEMBUAT 2 MODE DENGAN TABS
@@ -101,7 +120,6 @@ with tab1:
             'duration_minutes': [duration_minutes]
         })
         
-        # Prediksi menggunakan model terbaru yang ada di session state
         prediksi = st.session_state['model'].predict(input_data)[0]
         
         st.write("---")
@@ -116,45 +134,44 @@ with tab1:
             st.success(f"Kategori Penggunaan: **{prediksi}** ❄️")
 
 # ------------------------------------------
-# TAB 2: UPLOAD EXCEL (Latih Otomatis & Bulk Predict)
+# TAB 2: UPLOAD EXCEL
 # ------------------------------------------
 with tab2:
     st.subheader("Prediksi Sekaligus (Banyak Data)")
-    uploaded_file = st.file_uploader("Upload file Excel (.xlsx)", type=["xlsx"])
     
-    if uploaded_file is not None:
+    # Menggunakan on_change agar logika dijalankan sebelum render halaman berikutnya
+    uploaded_file = st.file_uploader(
+        "Upload file Excel (.xlsx)", 
+        type=["xlsx"], 
+        key="uploaded_file_key", 
+        on_change=handle_upload
+    )
+    
+    # Menampilkan error jika validasi kolom gagal
+    if st.session_state['error_message']:
+        st.error(st.session_state['error_message'])
+        st.info("💡 **Tips Tambahan:** Pastikan nama kolom di Excel sama persis dengan variabel `KOLOM_WAJIB` di baris atas kode program.")
+        
+    elif uploaded_file is not None and st.session_state['is_using_real_data']:
+        # Baca ulang file untuk menampilkan dataframe hasil prediksi bulk
         df = pd.read_excel(uploaded_file)
         
-        # Validasi apakah kolom yang dibutuhkan ada di Excel
-        if all(kolom in df.columns for kolom in KOLOM_WAJIB):
-            
-            # PROSES OPTIMAL: Otomatis melatih model menggunakan data dari Excel yang diunggah
-            model_asli, q1_asli, q2_asli = train_model_on_data(df)
-            
-            # Update ke session state agar Tab 1 (Manual) juga ikut menggunakan model pintar ini
-            st.session_state['model'] = model_asli
-            st.session_state['is_using_real_data'] = True
-            
-            st.success(f"🎉 Berhasil! Model Machine Learning telah otomatis dilatih ulang menggunakan {len(df)} baris dari data asli Anda.")
-            
-            # Hitung ulang score dan lakukan prediksi bulk
-            df['usage_score'] = df['power_watts'] * df['duration_minutes'] * df['occupancy_count']
-            df['Prediksi_Kategori'] = st.session_state['model'].predict(df[KOLOM_WAJIB])
-            
-            st.write("**Hasil Prediksi Data Excel (Kategori kini terbagi rata & akurat):**")
-            st.dataframe(df)
-            
-            # Tombol Download Hasil
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df.to_excel(writer, index=False, sheet_name='Hasil Prediksi')
-            
-            st.download_button(
-                label="📥 Download Hasil Prediksi (Excel)",
-                data=output.getvalue(),
-                file_name="hasil_prediksi_listrik_asli.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        else:
-            st.error(f"File Excel harus memiliki kolom wajib: {', '.join(KOLOM_WAJIB)}")
-            st.info("💡 **Tips Tambahan:** Berdasarkan tangkapan layar Anda, kolom Anda mungkin bernama berbeda (seperti `room_temp_c` atau `daily_cumulative_kwh`). Jika Anda ingin menggunakan kolom-kolom tersebut sebagai fitur training, silakan ubah daftar isi variabel `KOLOM_WAJIB` di bagian atas kode program ini.")
+        st.success(f"🎉 Berhasil! Model Machine Learning telah otomatis dilatih ulang menggunakan {len(df)} baris dari data asli Anda.")
+        
+        df['usage_score'] = df['power_watts'] * df['duration_minutes'] * df['occupancy_count']
+        df['Prediksi_Kategori'] = st.session_state['model'].predict(df[KOLOM_WAJIB])
+        
+        st.write("**Hasil Prediksi Data Excel (Kategori kini terbagi rata & akurat):**")
+        st.dataframe(df)
+        
+        # Tombol Download Hasil
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df.to_excel(writer, index=False, sheet_name='Hasil Prediksi')
+        
+        st.download_button(
+            label="📥 Download Hasil Prediksi (Excel)",
+            data=output.getvalue(),
+            file_name="hasil_prediksi_listrik_asli.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
